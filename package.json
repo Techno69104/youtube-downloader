@@ -1,6 +1,6 @@
 {
   "name": "youtube-downloader",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "YouTube Video Downloader",
   "main": "server.js",
   "scripts": {
@@ -8,7 +8,8 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "axios": "^1.6.2"
   },
   "engines": {
     "node": "20.x"
