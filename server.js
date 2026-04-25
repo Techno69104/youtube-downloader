@@ -1,5 +1,7 @@
 const express = require('express');
-const ytdl = require('@spacepumpkin/ytdl-core');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const cors = require('cors');
 
 const app = express();
@@ -9,41 +11,43 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-const YT_COOKIES = process.env.YT_COOKIES || '';
-const YT_ID_TOKEN = process.env.YT_ID_TOKEN || '';
-
-// Add bpctr parameter to bypass age restriction (key fix for 410)
-function addBypassParams(url) {
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}bpctr=9999999999&has_verified=1`;
+// Function to execute yt-dlp command
+function runYtDlp(command) {
+    return new Promise((resolve, reject) => {
+        exec(command, { maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+            resolve(stdout);
+        });
+    });
 }
 
+// Get video information using yt-dlp --dump-json
 app.post('/api/info', async (req, res) => {
     const { url } = req.body;
     
-    if (!url || !ytdl.validateURL(url)) {
-        return res.status(400).json({ error: 'Invalid YouTube URL' });
+    if (!url) {
+        return res.status(400).json({ error: 'No URL provided' });
     }
     
     try {
-        // Add bypass parameters to URL before making request
-        const videoUrl = addBypassParams(url);
+        // First update yt-dlp to latest version
+        await runYtDlp('yt-dlp -U');
         
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        };
-        
-        if (YT_COOKIES) headers['Cookie'] = YT_COOKIES;
-        if (YT_ID_TOKEN) headers['x-youtube-identity-token'] = YT_ID_TOKEN;
-        
-        const info = await ytdl.getInfo(videoUrl, { requestOptions: { headers } });
+        // Get video info as JSON
+        const command = `yt-dlp --dump-json --no-warnings "${url}"`;
+        const output = await runYtDlp(command);
+        const info = JSON.parse(output);
         
         res.json({
-            title: info.videoDetails.title,
-            thumbnail: info.videoDetails.thumbnails?.slice(-1)[0]?.url || `https://img.youtube.com/vi/${info.videoDetails.videoId}/maxresdefault.jpg`,
-            duration: info.videoDetails.lengthSeconds,
-            author: info.videoDetails.author.name,
-            videoId: info.videoDetails.videoId
+            title: info.title,
+            thumbnail: info.thumbnail,
+            duration: info.duration,
+            author: info.uploader,
+            videoId: info.id,
+            available: true
         });
     } catch (error) {
         console.error('Error:', error.message);
@@ -51,37 +55,56 @@ app.post('/api/info', async (req, res) => {
     }
 });
 
+// Download video
 app.get('/api/download', async (req, res) => {
-    const { url, itag } = req.query;
+    const { url, quality } = req.query;
     
-    if (!url || !ytdl.validateURL(url)) {
-        return res.status(400).json({ error: 'Invalid URL' });
+    if (!url) {
+        return res.status(400).json({ error: 'No URL provided' });
     }
     
+    // Map quality to yt-dlp format selector
+    let format = 'bestvideo[height<=720]+bestaudio/best';
+    if (quality === 'mp3') {
+        format = 'bestaudio/best';
+    }
+    
+    const tempFile = path.join('/tmp', `video_${Date.now()}.mp4`);
+    
     try {
-        const videoUrl = addBypassParams(url);
+        // First update yt-dlp
+        await runYtDlp('yt-dlp -U');
         
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        };
+        // Download video
+        const command = `yt-dlp -f "${format}" --no-warnings -o "${tempFile}" "${url}"`;
+        await runYtDlp(command);
         
-        if (YT_COOKIES) headers['Cookie'] = YT_COOKIES;
-        if (YT_ID_TOKEN) headers['x-youtube-identity-token'] = YT_ID_TOKEN;
+        // Stream file to response
+        const stat = fs.statSync(tempFile);
+        res.writeHead(200, {
+            'Content-Type': quality === 'mp3' ? 'audio/mpeg' : 'video/mp4',
+            'Content-Length': stat.size,
+            'Content-Disposition': `attachment; filename="youtube_video.${quality === 'mp3' ? 'mp3' : 'mp4'}"`
+        });
         
-        const info = await ytdl.getInfo(videoUrl, { requestOptions: { headers } });
-        const format = info.formats.find(f => f.itag == itag);
+        const readStream = fs.createReadStream(tempFile);
+        readStream.pipe(res);
         
-        if (!format) return res.status(400).json({ error: 'Format not available' });
+        readStream.on('end', () => {
+            // Clean up temp file
+            fs.unlinkSync(tempFile);
+        });
         
-        const filename = `${info.videoDetails.title.replace(/[^\w\s]/gi, '')}.${format.hasVideo ? 'mp4' : 'mp3'}`;
-        res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-        res.header('Content-Type', format.hasVideo ? 'video/mp4' : 'audio/mpeg');
-        
-        ytdl(videoUrl, { quality: itag, requestOptions: { headers } }).pipe(res);
     } catch (error) {
         console.error('Download error:', error);
         res.status(500).json({ error: 'Download failed: ' + error.message });
+        // Clean up if file exists
+        if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+        }
     }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
