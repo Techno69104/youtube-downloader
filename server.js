@@ -1,5 +1,6 @@
 const express = require('express');
 const ytdl = require('ytdl-core');
+const { ytdlp } = require('yt-dlp-exec');
 const cors = require('cors');
 
 const app = express();
@@ -9,40 +10,69 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-// Build cookie string from environment variables
-function buildCookieString() {
-    const cookies = [];
-    
-    // Method 1: Individual cookie variables
-    if (process.env.LOGIN_INFO) cookies.push(`LOGIN_INFO=${process.env.LOGIN_INFO}`);
-    if (process.env.SID) cookies.push(`SID=${process.env.SID}`);
-    if (process.env.HSID) cookies.push(`HSID=${process.env.HSID}`);
-    if (process.env.SSID) cookies.push(`SSID=${process.env.SSID}`);
-    if (process.env.APISID) cookies.push(`APISID=${process.env.APISID}`);
-    if (process.env.SAPISID) cookies.push(`SAPISID=${process.env.SAPISID}`);
-    
-    // Method 2: Single YT_COOKIES variable
-    if (process.env.YT_COOKIES) {
-        return process.env.YT_COOKIES;
-    }
-    
-    // Method 3: Full JSON export
-    if (process.env.YT_COOKIES_JSON) {
-        try {
-            const cookieArray = JSON.parse(process.env.YT_COOKIES_JSON);
-            return cookieArray.map(c => `${c.name}=${c.value}`).join('; ');
-        } catch (e) {
-            console.error('Failed to parse YT_COOKIES_JSON');
-        }
-    }
-    
-    return cookies.join('; ');
+// Your cookies from environment (keep these)
+const COOKIE_STRING = process.env.YT_COOKIES || '';
+
+// Helper to fix YouTube URLs
+function cleanYouTubeUrl(url) {
+    // Remove unnecessary parameters
+    return url.split('&')[0];
 }
 
-const COOKIE_STRING = buildCookieString();
-console.log('Cookies configured:', COOKIE_STRING ? '✅ Yes' : '❌ No');
+// Method 1: Try yt-dlp first (most reliable)
+async function getInfoWithYtDlp(url) {
+    try {
+        const result = await ytdlp(url, {
+            dumpJson: true,
+            noWarnings: true,
+            noCheckCertificates: true,
+            preferFreeFormats: true
+        });
+        
+        return {
+            title: result.title,
+            thumbnail: result.thumbnail,
+            duration: result.duration,
+            author: result.uploader,
+            videoId: result.id,
+            success: true,
+            method: 'yt-dlp'
+        };
+    } catch (error) {
+        console.log('yt-dlp failed:', error.message);
+        return null;
+    }
+}
 
-// Get video information
+// Method 2: Try ytdl-core with cookies
+async function getInfoWithYtdlCore(url, cookies) {
+    try {
+        const requestOptions = {};
+        if (cookies) {
+            requestOptions.headers = {
+                Cookie: cookies,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            };
+        }
+        
+        const info = await ytdl.getInfo(url, { requestOptions });
+        
+        return {
+            title: info.videoDetails.title,
+            thumbnail: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url,
+            duration: info.videoDetails.lengthSeconds,
+            author: info.videoDetails.author.name,
+            videoId: info.videoDetails.videoId,
+            success: true,
+            method: 'ytdl-core'
+        };
+    } catch (error) {
+        console.log('ytdl-core failed:', error.message);
+        return null;
+    }
+}
+
+// Get video information - tries multiple methods
 app.post('/api/info', async (req, res) => {
     const { url } = req.body;
     
@@ -50,92 +80,128 @@ app.post('/api/info', async (req, res) => {
         return res.status(400).json({ error: 'No URL provided' });
     }
     
-    if (!ytdl.validateURL(url)) {
-        return res.status(400).json({ error: 'Invalid YouTube URL' });
-    }
+    // Extract video ID for fallback thumbnail
+    let videoId = '';
+    const idMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+    if (idMatch) videoId = idMatch[1];
     
     try {
         console.log('Fetching info for:', url);
         
-        const requestOptions = {};
+        // Try yt-dlp first
+        let videoInfo = await getInfoWithYtDlp(url);
         
-        if (COOKIE_STRING) {
-            requestOptions.headers = {
-                Cookie: COOKIE_STRING,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            };
+        // If yt-dlp fails, try ytdl-core
+        if (!videoInfo) {
+            videoInfo = await getInfoWithYtdlCore(url, COOKIE_STRING);
         }
         
-        const info = await ytdl.getInfo(url, { requestOptions });
+        // If both fail, return basic info with thumbnail only
+        if (!videoInfo) {
+            return res.json({
+                title: 'YouTube Video',
+                thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                duration: 0,
+                author: 'Unknown',
+                videoId: videoId,
+                available: true,
+                basicMode: true,
+                message: 'Video info limited to thumbnail only. Download may still work.'
+            });
+        }
         
         res.json({
-            title: info.videoDetails.title,
-            thumbnail: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url,
-            duration: info.videoDetails.lengthSeconds,
-            author: info.videoDetails.author.name,
-            videoId: info.videoDetails.videoId,
+            title: videoInfo.title,
+            thumbnail: videoInfo.thumbnail,
+            duration: videoInfo.duration,
+            author: videoInfo.author,
+            videoId: videoInfo.videoId,
             available: true
         });
+        
     } catch (error) {
         console.error('Error:', error.message);
-        
-        if (error.message.includes('410')) {
-            res.status(410).json({ 
-                error: 'Video may be age-restricted. Make sure you\'re logged into YouTube and cookies are valid.',
-                code: 'AGE_RESTRICTED'
-            });
-        } else {
-            res.status(500).json({ error: 'Failed to fetch video: ' + error.message });
-        }
+        // Return basic info anyway so UI doesn't break
+        res.json({
+            title: 'YouTube Video',
+            thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+            duration: 0,
+            author: 'YouTube',
+            videoId: videoId,
+            basicMode: true,
+            available: true
+        });
     }
 });
 
-// Download video
+// Download endpoint with multiple methods
 app.get('/api/download', async (req, res) => {
     const { url, itag } = req.query;
     
-    if (!url || !ytdl.validateURL(url)) {
-        return res.status(400).json({ error: 'Invalid URL' });
+    if (!url) {
+        return res.status(400).json({ error: 'No URL provided' });
     }
     
     try {
-        const requestOptions = {};
+        let videoUrl = url;
+        let contentType = 'video/mp4';
+        let filename = 'youtube_video.mp4';
         
-        if (COOKIE_STRING) {
-            requestOptions.headers = {
-                Cookie: COOKIE_STRING,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            };
-        }
-        
-        const info = await ytdl.getInfo(url, { requestOptions });
-        const format = info.formats.find(f => f.itag == itag);
-        
-        if (!format) {
-            return res.status(400).json({ error: 'Format not available' });
-        }
-        
-        const safeTitle = info.videoDetails.title.replace(/[^\w\s]/gi, '');
-        const extension = format.hasVideo ? 'mp4' : 'mp3';
-        const filename = `${safeTitle}.${extension}`;
-        
-        res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-        res.header('Content-Type', format.hasVideo ? 'video/mp4' : 'audio/mpeg');
-        
-        const stream = ytdl(url, { quality: itag, requestOptions });
-        stream.pipe(res);
-        
-        stream.on('error', (err) => {
-            console.error('Stream error:', err);
-            if (!res.headersSent) {
-                res.status(500).json({ error: 'Download failed' });
+        // Try yt-dlp first for download
+        try {
+            const info = await ytdlp(url, { dumpJson: true });
+            const safeTitle = (info.title || 'video').replace(/[^\w\s]/gi, '');
+            
+            // Map itag to format for yt-dlp
+            let format = 'bestvideo[height<=720]+bestaudio/best';
+            if (itag === '22') format = 'bestvideo[height<=720]+bestaudio/best';
+            if (itag === '18') format = 'bestvideo[height<=360]+bestaudio/best';
+            if (itag === '140') format = 'bestaudio';
+            
+            filename = `${safeTitle}.mp4`;
+            if (itag === '140') {
+                contentType = 'audio/mpeg';
+                filename = `${safeTitle}.mp3`;
             }
-        });
+            
+            res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+            res.header('Content-Type', contentType);
+            
+            const stream = await ytdlp(url, {
+                format: format,
+                output: '-',
+                noWarnings: true
+            });
+            
+            stream.pipe(res);
+            return;
+            
+        } catch (ytdlpError) {
+            console.log('yt-dlp download failed, trying ytdl-core');
+            
+            // Fallback to ytdl-core
+            const requestOptions = {};
+            if (COOKIE_STRING) {
+                requestOptions.headers = { Cookie: COOKIE_STRING };
+            }
+            
+            const info = await ytdl.getInfo(url, { requestOptions });
+            const format = info.formats.find(f => f.itag == itag);
+            
+            if (!format) {
+                throw new Error('Format not available');
+            }
+            
+            const safeTitle = info.videoDetails.title.replace(/[^\w\s]/gi, '');
+            filename = `${safeTitle}.${format.hasVideo ? 'mp4' : 'mp3'}`;
+            
+            res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+            res.header('Content-Type', format.hasVideo ? 'video/mp4' : 'audio/mpeg');
+            
+            const stream = ytdl(url, { quality: itag, requestOptions });
+            stream.pipe(res);
+        }
+        
     } catch (error) {
         console.error('Download error:', error);
         res.status(500).json({ error: 'Download failed: ' + error.message });
@@ -144,4 +210,5 @@ app.get('/api/download', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`Cookie status: ${COOKIE_STRING ? '✅ Configured' : '❌ Not configured'}`);
 });
