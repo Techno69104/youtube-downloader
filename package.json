@@ -9,7 +9,7 @@
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "ytdl-core": "^4.11.5"
+    "@spacepumpkin/ytdl-core": "^4.11.22081102"
   },
   "engines": {
     "node": "20.x"
