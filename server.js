@@ -5,17 +5,19 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable CORS for your WordPress site
-app.use(cors({
-    origin: ['https://tools.rozgar-alerts.com', 'https://rozgar-alerts.com']
-}));
+// Enable CORS
+app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-// Serve the HTML interface
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
-});
+// Helper function to extract cookies from environment variable
+function getCookies() {
+    // You can set this in Render environment variables
+    if (process.env.YT_COOKIE) {
+        return process.env.YT_COOKIE;
+    }
+    return '';
+}
 
 // Get video information
 app.post('/api/info', async (req, res) => {
@@ -25,34 +27,47 @@ app.post('/api/info', async (req, res) => {
         return res.status(400).json({ error: 'No URL provided' });
     }
     
+    // Validate YouTube URL
     if (!ytdl.validateURL(url)) {
         return res.status(400).json({ error: 'Invalid YouTube URL' });
     }
     
     try {
         console.log('Fetching info for:', url);
-        const info = await ytdl.getInfo(url);
         
-        const response = {
+        // Request options with cookies to avoid 410 error
+        const requestOptions = {};
+        const cookies = getCookies();
+        
+        if (cookies) {
+            requestOptions.headers = {
+                cookie: cookies,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            };
+        }
+        
+        const info = await ytdl.getInfo(url, { requestOptions });
+        
+        res.json({
             title: info.videoDetails.title,
             thumbnail: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url,
             duration: info.videoDetails.lengthSeconds,
             author: info.videoDetails.author.name,
             videoId: info.videoDetails.videoId,
-            formats: info.formats.filter(f => f.hasVideo || f.hasAudio).map(f => ({
-                itag: f.itag,
-                quality: f.qualityLabel || f.quality,
-                container: f.container,
-                hasVideo: f.hasVideo,
-                hasAudio: f.hasAudio,
-                contentLength: f.contentLength
-            }))
-        };
-        
-        res.json(response);
+            available: true
+        });
     } catch (error) {
         console.error('Error:', error.message);
-        res.status(500).json({ error: 'Failed to fetch video: ' + error.message });
+        
+        // Check if it's an age-restricted video
+        if (error.message.includes('410')) {
+            res.status(410).json({ 
+                error: 'Video may be age-restricted or not available in your region. Try a different video.',
+                code: 'AGE_RESTRICTED'
+            });
+        } else {
+            res.status(500).json({ error: 'Failed to fetch video: ' + error.message });
+        }
     }
 });
 
@@ -65,14 +80,23 @@ app.get('/api/download', async (req, res) => {
     }
     
     try {
-        const info = await ytdl.getInfo(url);
+        const requestOptions = {};
+        const cookies = getCookies();
+        
+        if (cookies) {
+            requestOptions.headers = {
+                cookie: cookies,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            };
+        }
+        
+        const info = await ytdl.getInfo(url, { requestOptions });
         const format = info.formats.find(f => f.itag == itag);
         
         if (!format) {
             return res.status(400).json({ error: 'Format not available' });
         }
         
-        // Create safe filename
         const safeTitle = info.videoDetails.title.replace(/[^\w\s]/gi, '');
         const extension = format.hasVideo ? 'mp4' : 'mp3';
         const filename = `${safeTitle}.${extension}`;
@@ -80,8 +104,7 @@ app.get('/api/download', async (req, res) => {
         res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
         res.header('Content-Type', format.hasVideo ? 'video/mp4' : 'audio/mpeg');
         
-        // Stream the video
-        const stream = ytdl(url, { quality: itag });
+        const stream = ytdl(url, { quality: itag, requestOptions });
         stream.pipe(res);
         
         stream.on('error', (err) => {
@@ -98,7 +121,4 @@ app.get('/api/download', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`API endpoints:`);
-    console.log(`  POST /api/info - Get video info`);
-    console.log(`  GET  /api/download - Download video`);
 });
