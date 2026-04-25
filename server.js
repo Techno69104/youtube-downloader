@@ -9,21 +9,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-// Get cookies from environment variable (for age-restricted videos)
+// Get credentials from environment variables
 const YT_COOKIES = process.env.YT_COOKIES || '';
+const YT_ID_TOKEN = process.env.YT_ID_TOKEN || '';
 
-// Helper function to extract video ID
-function extractVideoId(url) {
-    const patterns = [
-        /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]+)/,
-        /(?:youtu\.be\/)([a-zA-Z0-9_-]+)/,
-        /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/
-    ];
-    for (const pattern of patterns) {
-        const match = url.match(pattern);
-        if (match) return match[1];
-    }
-    return null;
+console.log('=== YouTube Downloader Starting ===');
+console.log(`Cookies configured: ${YT_COOKIES ? '✅ YES' : '❌ NO'}`);
+console.log(`ID Token configured: ${YT_ID_TOKEN ? '✅ YES' : '❌ NO'}`);
+
+// Add age verification parameter to URL
+function addAgeVerificationParam(url) {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}bpctr=${Date.now()}&has_verified=1`;
 }
 
 // Get video information
@@ -41,19 +38,34 @@ app.post('/api/info', async (req, res) => {
     try {
         console.log('Fetching info for:', url);
         
-        // Request options with cookies for age-restricted videos
-        const requestOptions = {};
+        // Build headers with both cookie AND identity token
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        };
+        
         if (YT_COOKIES) {
-            requestOptions.headers = {
-                Cookie: YT_COOKIES,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            };
+            headers['Cookie'] = YT_COOKIES;
         }
         
-        const info = await ytdl.getInfo(url, { requestOptions });
+        if (YT_ID_TOKEN) {
+            headers['x-youtube-identity-token'] = YT_ID_TOKEN;
+        }
+        
+        const requestOptions = { headers };
+        
+        let videoUrl = url;
+        let info;
+        
+        try {
+            info = await ytdl.getInfo(videoUrl, { requestOptions });
+        } catch (firstError) {
+            console.log('First attempt failed, retrying with age verification...');
+            videoUrl = addAgeVerificationParam(url);
+            info = await ytdl.getInfo(videoUrl, { requestOptions });
+        }
+        
         const videoDetails = info.videoDetails;
         
-        // Get best thumbnail
         const thumbnail = videoDetails.thumbnails && videoDetails.thumbnails.length > 0 
             ? videoDetails.thumbnails[videoDetails.thumbnails.length - 1].url 
             : `https://img.youtube.com/vi/${videoDetails.videoId}/maxresdefault.jpg`;
@@ -82,24 +94,36 @@ app.get('/api/download', async (req, res) => {
     }
     
     try {
-        const requestOptions = {};
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        };
+        
         if (YT_COOKIES) {
-            requestOptions.headers = {
-                Cookie: YT_COOKIES,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            };
+            headers['Cookie'] = YT_COOKIES;
         }
         
-        const info = await ytdl.getInfo(url, { requestOptions });
+        if (YT_ID_TOKEN) {
+            headers['x-youtube-identity-token'] = YT_ID_TOKEN;
+        }
         
-        // Find the requested format
+        const requestOptions = { headers };
+        
+        let videoUrl = url;
+        let info;
+        
+        try {
+            info = await ytdl.getInfo(videoUrl, { requestOptions });
+        } catch (firstError) {
+            videoUrl = addAgeVerificationParam(url);
+            info = await ytdl.getInfo(videoUrl, { requestOptions });
+        }
+        
         const format = info.formats.find(f => f.itag == itag);
         
         if (!format) {
             return res.status(400).json({ error: 'Format not available' });
         }
         
-        // Create safe filename
         const safeTitle = info.videoDetails.title.replace(/[^\w\s]/gi, '');
         const extension = format.hasVideo ? 'mp4' : 'mp3';
         const filename = `${safeTitle}.${extension}`;
@@ -107,8 +131,7 @@ app.get('/api/download', async (req, res) => {
         res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
         res.header('Content-Type', format.hasVideo ? 'video/mp4' : 'audio/mpeg');
         
-        // Stream the video
-        const stream = ytdl(url, { quality: itag, requestOptions });
+        const stream = ytdl(videoUrl, { quality: itag, requestOptions });
         stream.pipe(res);
         
         stream.on('error', (err) => {
@@ -126,5 +149,5 @@ app.get('/api/download', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Cookies configured: ${YT_COOKIES ? 'Yes' : 'No'}`);
+    console.log('Ready to download YouTube videos!');
 });
