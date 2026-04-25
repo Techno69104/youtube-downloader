@@ -216,21 +216,19 @@
             buttonsContainer.innerHTML = '';
             
             const qualities = [
-                { label: '🎥 720p HD', itag: '22' },
-                { label: '🎥 480p', itag: '135' },
-                { label: '🎥 360p', itag: '18' },
-                { label: '🎵 MP3 Audio', itag: '140' }
-            ];
-            
-            qualities.forEach(q => {
-                const btn = document.createElement('button');
-                btn.textContent = q.label;
-                btn.className = 'quality-btn';
-                btn.onclick = () => {
-                    window.location.href = `/api/download?url=${encodeURIComponent(videoUrl)}&itag=${q.itag}`;
-                };
-                buttonsContainer.appendChild(btn);
-            });
+    { label: '🎥 720p HD', quality: '720' },
+    { label: '🎥 360p', quality: '360' },
+    { label: '🎵 MP3 Audio', quality: 'mp3' }
+];
+
+qualities.forEach(q => {
+    const btn = document.createElement('button');
+    btn.textContent = q.label;
+    btn.onclick = () => {
+        window.location.href = `/api/download?url=${encodeURIComponent(videoUrl)}&quality=${q.quality}`;
+    };
+    buttonsContainer.appendChild(btn);
+});
             
             videoInfoDiv.style.display = 'block';
         }
