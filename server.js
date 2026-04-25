@@ -9,10 +9,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-// Get cookies from environment variable
+// Get cookies from environment variable (for age-restricted videos)
 const YT_COOKIES = process.env.YT_COOKIES || '';
 
-// Helper to extract video ID
+// Helper function to extract video ID
 function extractVideoId(url) {
     const patterns = [
         /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]+)/,
@@ -34,7 +34,6 @@ app.post('/api/info', async (req, res) => {
         return res.status(400).json({ error: 'No URL provided' });
     }
     
-    // Validate YouTube URL
     if (!ytdl.validateURL(url)) {
         return res.status(400).json({ error: 'Invalid YouTube URL' });
     }
@@ -65,22 +64,12 @@ app.post('/api/info', async (req, res) => {
             duration: videoDetails.lengthSeconds,
             author: videoDetails.author.name,
             videoId: videoDetails.videoId,
-            available: true,
-            isAgeRestricted: videoDetails.age_restricted || false
+            available: true
         });
         
     } catch (error) {
         console.error('Error:', error.message);
-        
-        // Handle 410 error (age-restricted or unavailable)
-        if (error.message.includes('410')) {
-            res.status(410).json({ 
-                error: 'This video may be age-restricted or unavailable. Try a different video.',
-                code: 'AGE_RESTRICTED'
-            });
-        } else {
-            res.status(500).json({ error: 'Failed to fetch video: ' + error.message });
-        }
+        res.status(500).json({ error: 'Failed to fetch video: ' + error.message });
     }
 });
 
@@ -93,7 +82,6 @@ app.get('/api/download', async (req, res) => {
     }
     
     try {
-        // Request options with cookies
         const requestOptions = {};
         if (YT_COOKIES) {
             requestOptions.headers = {
@@ -119,12 +107,8 @@ app.get('/api/download', async (req, res) => {
         res.header('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
         res.header('Content-Type', format.hasVideo ? 'video/mp4' : 'audio/mpeg');
         
-        // Stream the video with cookies
-        const stream = ytdl(url, { 
-            quality: itag, 
-            requestOptions 
-        });
-        
+        // Stream the video
+        const stream = ytdl(url, { quality: itag, requestOptions });
         stream.pipe(res);
         
         stream.on('error', (err) => {
@@ -142,5 +126,5 @@ app.get('/api/download', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Cookies configured: ${YT_COOKIES ? '✅ Yes' : '❌ No'}`);
+    console.log(`Cookies configured: ${YT_COOKIES ? 'Yes' : 'No'}`);
 });
