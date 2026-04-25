@@ -36,12 +36,10 @@
             border: 2px solid #e2e8f0;
             border-radius: 12px;
             margin-bottom: 15px;
-            transition: all 0.3s;
         }
         input:focus {
             outline: none;
             border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
         }
         button {
             width: 100%;
@@ -53,10 +51,9 @@
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
         }
-        button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(102,126,234,0.3); }
-        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        button:hover { transform: translateY(-2px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
         .loading { text-align: center; margin-top: 24px; display: none; }
         .spinner {
             width: 40px; height: 40px;
@@ -75,10 +72,9 @@
             display: none;
         }
         .video-preview { display: flex; gap: 20px; flex-wrap: wrap; }
-        .video-preview img { width: 160px; border-radius: 12px; object-fit: cover; }
+        .video-preview img { width: 160px; border-radius: 12px; }
         .video-details { flex: 1; }
         .video-details h3 { margin-bottom: 8px; color: #1e293b; }
-        .video-details p { color: #64748b; font-size: 14px; margin-bottom: 4px; }
         .quality-buttons {
             display: flex;
             flex-wrap: wrap;
@@ -95,35 +91,19 @@
             color: #334155;
             border: 1px solid #e2e8f0;
             border-radius: 10px;
-            font-size: 13px;
-            font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
         }
         .quality-btn:hover {
             background: #667eea;
-            border-color: #667eea;
             color: white;
         }
         .error {
             background: #fef2f2;
             color: #dc2626;
-            padding: 12px 16px;
+            padding: 12px;
             border-radius: 12px;
             margin-top: 16px;
-            font-size: 14px;
             display: none;
-            border-left: 3px solid #dc2626;
-        }
-        .success {
-            background: #f0fdf4;
-            color: #16a34a;
-            padding: 12px 16px;
-            border-radius: 12px;
-            margin-top: 16px;
-            font-size: 14px;
-            display: none;
-            border-left: 3px solid #16a34a;
         }
         .features {
             display: grid;
@@ -133,8 +113,8 @@
             padding-top: 20px;
             border-top: 1px solid #e2e8f0;
         }
-        .feature { text-align: center; padding: 8px; }
-        .feature div { font-size: 24px; margin-bottom: 6px; }
+        .feature { text-align: center; }
+        .feature div { font-size: 24px; }
         .feature span { font-size: 12px; color: #64748b; }
         @media (max-width: 600px) {
             .container { padding: 24px; }
@@ -146,9 +126,9 @@
 <body>
     <div class="container">
         <h1>🎬 YouTube Video Downloader</h1>
-        <div class="subtitle">Download videos in MP4 format • 100% Free • No Registration</div>
+        <div class="subtitle">Download any video - Works with age-restricted content!</div>
         
-        <input type="text" id="url" placeholder="Paste YouTube URL here (e.g., https://youtube.com/watch?v=...)" />
+        <input type="text" id="url" placeholder="Paste YouTube URL here" />
         <button id="getInfoBtn">🔍 Get Video Information</button>
         
         <div class="loading" id="loading">
@@ -158,7 +138,7 @@
         
         <div class="video-info" id="videoInfo">
             <div class="video-preview">
-                <img id="thumbnail" alt="Video thumbnail">
+                <img id="thumbnail" alt="Thumbnail">
                 <div class="video-details">
                     <h3 id="title"></h3>
                     <p id="details"></p>
@@ -168,13 +148,12 @@
         </div>
         
         <div class="error" id="error"></div>
-        <div class="success" id="success"></div>
         
         <div class="features">
-            <div class="feature"><div>🎥</div><span>720p/1080p/4K</span></div>
+            <div class="feature"><div>🎥</div><span>720p/1080p</span></div>
             <div class="feature"><div>🎵</div><span>MP3 Audio</span></div>
             <div class="feature"><div>⚡</div><span>Fast Download</span></div>
-            <div class="feature"><div>🆓</div><span>Completely Free</span></div>
+            <div class="feature"><div>🆓</div><span>100% Free</span></div>
         </div>
     </div>
 
@@ -184,7 +163,6 @@
         const loadingDiv = document.getElementById('loading');
         const videoInfoDiv = document.getElementById('videoInfo');
         const errorDiv = document.getElementById('error');
-        const successDiv = document.getElementById('success');
         
         getInfoBtn.addEventListener('click', async () => {
             const url = urlInput.value.trim();
@@ -195,12 +173,9 @@
             
             showLoading(true);
             hideError();
-            hideSuccess();
             hideVideoInfo();
             
             try {
-                console.log('Fetching info for:', url);
-                
                 const response = await fetch('/api/info', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -209,14 +184,13 @@
                 
                 const data = await response.json();
                 
-                if (!response.ok || data.error) {
-                    throw new Error(data.error || 'Failed to fetch video info');
+                if (data.error) {
+                    throw new Error(data.error);
                 }
                 
                 displayVideoInfo(data, url);
             } catch (err) {
-                console.error('Error:', err);
-                showError(err.message || 'Failed to fetch video information. Please check the URL and try again.');
+                showError(err.message);
             } finally {
                 showLoading(false);
             }
@@ -227,17 +201,13 @@
             document.getElementById('title').textContent = info.title;
             const mins = Math.floor(info.duration / 60);
             const secs = info.duration % 60;
-            const duration = `${mins}:${secs.toString().padStart(2,'0')}`;
-            document.getElementById('details').innerHTML = `⏱️ ${duration} • 📺 ${info.author || 'YouTube'}`;
+            document.getElementById('details').innerHTML = `⏱️ ${mins}:${secs.toString().padStart(2,'0')} • 📺 ${info.author}`;
             
             const buttonsContainer = document.getElementById('qualityButtons');
             buttonsContainer.innerHTML = '';
             
-            // Common quality options with their itags
             const qualities = [
-                { label: '🎥 1080p HD', itag: '137' },
                 { label: '🎥 720p HD', itag: '22' },
-                { label: '🎥 480p', itag: '135' },
                 { label: '🎥 360p', itag: '18' },
                 { label: '🎵 MP3 Audio', itag: '140' }
             ];
@@ -247,10 +217,7 @@
                 btn.textContent = q.label;
                 btn.className = 'quality-btn';
                 btn.onclick = () => {
-                    const downloadUrl = `/api/download?url=${encodeURIComponent(videoUrl)}&itag=${q.itag}`;
-                    window.location.href = downloadUrl;
-                    showSuccess(`Download started! Your ${q.label} video is being downloaded.`);
-                    setTimeout(() => hideSuccess(), 3000);
+                    window.location.href = `/api/download?url=${encodeURIComponent(videoUrl)}&itag=${q.itag}`;
                 };
                 buttonsContainer.appendChild(btn);
             });
@@ -261,8 +228,6 @@
         function showLoading(show) { loadingDiv.style.display = show ? 'block' : 'none'; }
         function showError(msg) { errorDiv.textContent = msg; errorDiv.style.display = 'block'; }
         function hideError() { errorDiv.style.display = 'none'; }
-        function showSuccess(msg) { successDiv.textContent = msg; successDiv.style.display = 'block'; }
-        function hideSuccess() { successDiv.style.display = 'none'; }
         function hideVideoInfo() { videoInfoDiv.style.display = 'none'; }
     </script>
 </body>
