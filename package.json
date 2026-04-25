@@ -1,0 +1,16 @@
+{
+  "name": "youtube-downloader",
+  "version": "1.0.0",
+  "description": "Free YouTube Video Downloader",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ytdl-core": "^4.11.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
