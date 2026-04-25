@@ -11,8 +11,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('.'));
 
-// Function to execute yt-dlp command
-function runYtDlp(command) {
+// Helper to run commands
+function runCommand(command) {
     return new Promise((resolve, reject) => {
         exec(command, { maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
             if (error) {
@@ -24,7 +24,7 @@ function runYtDlp(command) {
     });
 }
 
-// Get video information using yt-dlp --dump-json
+// Get video information
 app.post('/api/info', async (req, res) => {
     const { url } = req.body;
     
@@ -33,12 +33,11 @@ app.post('/api/info', async (req, res) => {
     }
     
     try {
-        // First update yt-dlp to latest version
-        await runYtDlp('yt-dlp -U');
+        console.log('Fetching info for:', url);
         
         // Get video info as JSON
         const command = `yt-dlp --dump-json --no-warnings "${url}"`;
-        const output = await runYtDlp(command);
+        const output = await runCommand(command);
         const info = JSON.parse(output);
         
         res.json({
@@ -72,33 +71,33 @@ app.get('/api/download', async (req, res) => {
     const tempFile = path.join('/tmp', `video_${Date.now()}.mp4`);
     
     try {
-        // First update yt-dlp
-        await runYtDlp('yt-dlp -U');
+        console.log('Downloading with format:', format);
         
         // Download video
         const command = `yt-dlp -f "${format}" --no-warnings -o "${tempFile}" "${url}"`;
-        await runYtDlp(command);
+        await runCommand(command);
         
         // Stream file to response
         const stat = fs.statSync(tempFile);
+        const contentType = quality === 'mp3' ? 'audio/mpeg' : 'video/mp4';
+        const extension = quality === 'mp3' ? 'mp3' : 'mp4';
+        
         res.writeHead(200, {
-            'Content-Type': quality === 'mp3' ? 'audio/mpeg' : 'video/mp4',
+            'Content-Type': contentType,
             'Content-Length': stat.size,
-            'Content-Disposition': `attachment; filename="youtube_video.${quality === 'mp3' ? 'mp3' : 'mp4'}"`
+            'Content-Disposition': `attachment; filename="youtube_video.${extension}"`
         });
         
         const readStream = fs.createReadStream(tempFile);
         readStream.pipe(res);
         
         readStream.on('end', () => {
-            // Clean up temp file
             fs.unlinkSync(tempFile);
         });
         
     } catch (error) {
         console.error('Download error:', error);
         res.status(500).json({ error: 'Download failed: ' + error.message });
-        // Clean up if file exists
         if (fs.existsSync(tempFile)) {
             fs.unlinkSync(tempFile);
         }
